@@ -1,7 +1,7 @@
 name: Tests and release
 
 permissions:
-  contents: write
+  contents: write # for publish
 
 on:
   push:
