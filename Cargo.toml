@@ -14,3 +14,8 @@ tokio = { version = "1.32.0", features = [
     "rt-multi-thread",
 ] }
 warp = "0.3.5"
+
+
+[profile.release]
+strip = true # Automatically strip symbols from the binary.
+lto = true   # Run an LTO optimisation pass over the final binary to shake out any dead leftovers
