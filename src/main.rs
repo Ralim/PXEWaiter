@@ -18,20 +18,13 @@ struct Args {
     http: u16,
 }
 
-#[tokio::main]
-async fn main() {
-    let args = Args::parse();
-    let server_path = args.path;
-    let tftp_thread: JoinHandle<()>;
-    let server_ip = Ipv4Addr::new(0, 0, 0, 0); //Listen on all interfaces by default
-                                               // Spawn tftp server if enabled
-
-    tftp_thread = if args.tftp > 0 {
-        let tftp_port = args.tftp;
+fn start_tftpd(port: u16, server_path: &PathBuf) -> JoinHandle<()> {
+    if port > 0 {
+        let tftp_port = port;
         let tftp_path = server_path.clone();
         std::thread::spawn(move || {
             //Start tftp server
-
+            let server_ip = Ipv4Addr::new(0, 0, 0, 0); //Listen on all interfaces by default
             let config = tftpd::Config {
                 ip_address: server_ip,
                 port: tftp_port,
@@ -60,7 +53,18 @@ async fn main() {
     } else {
         //No-op
         std::thread::spawn(move || {})
-    };
+    }
+}
+
+#[tokio::main]
+async fn main() {
+    let args = Args::parse();
+    let server_path = args.path;
+    let tftp_thread: JoinHandle<()>;
+    let server_ip = Ipv4Addr::new(0, 0, 0, 0); //Listen on all interfaces by default
+
+    // Spawn tftp server if enabled
+    tftp_thread = start_tftpd(args.tftp, &server_path);
 
     //Start HTTP server if requested, and if so block waiting for it to exit
     if args.http > 0 {
