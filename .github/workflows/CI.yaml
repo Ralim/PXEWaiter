@@ -67,6 +67,17 @@ jobs:
             bin: pxe_waiter
             name: pxe_waiter-NetBSD-x86_64.tar.gz
             skip_tests: true
+          - os_name: macOS-x86_64
+            os: macOS-latest
+            target: x86_64-apple-darwin
+            bin: precious
+            name: precious-Darwin-x86_64.tar.gz
+          - os_name: macOS-aarch64
+            os: macOS-latest
+            target: aarch64-apple-darwin
+            bin: precious
+            name: precious-Darwin-aarch64.tar.gz
+            skip_tests: true
         toolchain:
           - stable
     steps:
