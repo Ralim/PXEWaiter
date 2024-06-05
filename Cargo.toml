@@ -17,5 +17,6 @@ warp = "0.3.5"
 
 
 [profile.release]
-strip = true # Automatically strip symbols from the binary.
-lto = true   # Run an LTO optimisation pass over the final binary to shake out any dead leftovers
+strip = true      # Automatically strip symbols from the binary.
+lto = true        # Run an LTO optimisation pass over the final binary to shake out any dead leftovers
+codegen-units = 1 # Split all the units so LTO can go to town

@@ -1,9 +1,23 @@
 # PXEWaiter
 
-tftp+http server for PXE'ing clients
+When you need to run TFTP+HTTP servers to PXE boot machines on the network, in a super minimal manner.
+This is designed to serve iPXE for a LAN that its running on. Either run it on a host machine or in docker; doesnt matter which 😀
 
-# Kudos
+## Usage
 
-This project is 99.9% built on the amazing work of other people
+Create the directory you want to share to be available; for example here we will use `pxe`
+Then run `pxewaiter` to serve that directory.
 
-- https://github.com/altugbakan/rs-tftpd
+```sh
+mkdir -p pxe
+echo "test" > pxe/test
+pxe_waiter -p "pxe/" --http 8080 --tftp 69
+# The elsewhere run
+curl -vvv http://localhost:8080/test
+```
+
+## Kudos
+
+This project is 99.999% built on the amazing work of other people
+
+- <https://github.com/altugbakan/rs-tftpd>
