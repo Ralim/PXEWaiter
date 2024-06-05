@@ -5,20 +5,25 @@ use clap::Parser;
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// Name of the person to greet
+    /// Path to serve
     #[arg(short, long)]
     path: PathBuf,
 
     // PORTS, setting one to non-zero will enable that service
     // tftp port
-    #[arg(long, default_value_t = 0)]
+    #[arg(long, default_value_t = 69)]
     tftp: u16,
     // http port
-    #[arg(long, default_value_t = 0)]
+    #[arg(long, default_value_t = 80)]
     http: u16,
+
+    //Config options
+    // How many times TFTP should duplicate each packet, can help on lossy links
+    #[arg(long, default_value_t = 1)]
+    tftp_duplicate_packets: u8,
 }
 
-fn start_tftpd(port: u16, server_path: &PathBuf) -> JoinHandle<()> {
+fn start_tftpd(port: u16, server_path: &PathBuf, tftp_duplicate_packets: u8) -> JoinHandle<()> {
     if port > 0 {
         let tftp_port = port;
         let tftp_path = server_path.clone();
@@ -26,11 +31,15 @@ fn start_tftpd(port: u16, server_path: &PathBuf) -> JoinHandle<()> {
             //Start tftp server
             let server_ip = Ipv4Addr::new(0, 0, 0, 0); //Listen on all interfaces by default
             let config = tftpd::Config {
-                ip_address: server_ip,
+                ip_address: std::net::IpAddr::V4(server_ip),
                 port: tftp_port,
-                directory: tftp_path,
-                single_port: false,
+                directory: tftp_path.clone(),
+                single_port: true,
                 read_only: true,
+                receive_directory: tftp_path.clone(), // We are read only, so doesn't matter
+                send_directory: tftp_path.clone(),
+                duplicate_packets: tftp_duplicate_packets,
+                overwrite: false, // We are read only, so doesn't matter
             };
 
             let mut server = tftpd::Server::new(&config).unwrap_or_else(|err| {
@@ -51,7 +60,7 @@ fn start_tftpd(port: u16, server_path: &PathBuf) -> JoinHandle<()> {
             server.listen();
         })
     } else {
-        //No-op
+        //No-op, give back a blank thread handle
         std::thread::spawn(move || {})
     }
 }
@@ -64,7 +73,7 @@ async fn main() {
     let server_ip = Ipv4Addr::new(0, 0, 0, 0); //Listen on all interfaces by default
 
     // Spawn tftp server if enabled
-    tftp_thread = start_tftpd(args.tftp, &server_path);
+    tftp_thread = start_tftpd(args.tftp, &server_path, args.tftp_duplicate_packets);
 
     //Start HTTP server if requested, and if so block waiting for it to exit
     if args.http > 0 {
