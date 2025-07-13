@@ -12,12 +12,13 @@ Then run `pxewaiter` to serve that directory.
 mkdir -p pxe
 echo "test" > pxe/test
 pxe_waiter -p "pxe/" --http 8080 --tftp 69
-# The elsewhere run
+# Then elsewhere run
 curl -vvv http://localhost:8080/test
 ```
 
 ## Kudos
 
-This project is 99.999% built on the amazing work of other people
+This project is 99.999% built on the amazing work of other people. It's just a small wrapper that glues them together.
 
 - <https://github.com/altugbakan/rs-tftpd>
+- <https://github.com/tokio-rs/tokio>
