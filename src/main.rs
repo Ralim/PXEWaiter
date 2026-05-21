@@ -20,14 +20,9 @@ struct Args {
     // http port
     #[arg(long, default_value_t = 80)]
     http: u16,
-
-    //Config options
-    // How many times TFTP should duplicate each packet, can help on lossy links
-    #[arg(long, default_value_t = 1)]
-    tftp_duplicate_packets: u8,
 }
 
-fn start_tftpd(port: u16, server_path: &Path, tftp_duplicate_packets: u8) -> JoinHandle<()> {
+fn start_tftpd(port: u16, server_path: &Path) -> JoinHandle<()> {
     if port > 0 {
         let tftp_port = port;
         let tftp_path = server_path.to_path_buf();
@@ -42,11 +37,8 @@ fn start_tftpd(port: u16, server_path: &Path, tftp_duplicate_packets: u8) -> Joi
                 read_only: true,
                 receive_directory: tftp_path.clone(), // We are read only, so doesn't matter
                 send_directory: tftp_path.clone(),
-                duplicate_packets: tftp_duplicate_packets,
                 overwrite: false,
-                clean_on_error: true,
-                max_retries: 10,
-                rollover: tftpd::Rollover::DontCare,
+                opt_local: Default::default(),
             };
 
             let mut server = tftpd::Server::new(&config).unwrap_or_else(|err| {
@@ -80,8 +72,7 @@ async fn main() {
     let server_ip = Ipv4Addr::new(0, 0, 0, 0); //Listen on all interfaces by default
 
     // Spawn tftp server if enabled
-    let tftp_thread: JoinHandle<()> =
-        start_tftpd(args.tftp, &server_path, args.tftp_duplicate_packets);
+    let tftp_thread: JoinHandle<()> = start_tftpd(args.tftp, &server_path);
 
     //Start HTTP server if requested, and if so block waiting for it to exit
     if args.http > 0 {
@@ -135,11 +126,7 @@ mod tests {
         let tftp_port = get_free_port();
 
         // Start TFTP server in a background thread
-        let _ = start_tftpd(
-            tftp_port,
-            dir.path(),
-            1, // no duplication
-        );
+        let _ = start_tftpd(tftp_port, dir.path());
 
         // Give the server a moment to start
         thread::sleep(Duration::from_millis(300));
@@ -194,10 +181,12 @@ mod tests {
         let http_handle = tokio::spawn(async move {
             let routes = warp::fs::dir(server_path);
             warp::serve(routes)
-                .bind_with_graceful_shutdown((server_ip, http_port), async {
+                .bind((server_ip, http_port))
+                .await
+                .graceful(async {
                     shutdown_rx.await.ok();
                 })
-                .1
+                .run()
                 .await;
         });
 
