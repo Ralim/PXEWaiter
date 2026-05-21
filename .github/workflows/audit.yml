@@ -1,5 +1,7 @@
 name: Security audit - on push
 
+permissions:
+  contents: read # for publish
 on:
   push:
     paths:
