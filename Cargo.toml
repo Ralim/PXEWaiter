@@ -1,20 +1,26 @@
 [package]
 name = "pxe_waiter"
-version = "0.1.5"
-edition = "2021"
+version = "0.2.0"
+edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 clap = { version = "4.4.0", features = ["derive"] }
-tftpd = "0.3.0"
+tempfile = "3.20.0"
+tftpd = "1"
 tokio = { version = "1.32.0", features = [
     "default",
     "macros",
     "rt-multi-thread",
 ] }
-warp = "0.3.5"
+warp = { version = "0.4", features = ["server"] }
 
+[dev-dependencies]
+reqwest = { version = "0.13", features = [
+    "rustls",
+], default-features = false }
+tftp_client = "0.3.0"
 
 [profile.release]
 strip = true      # Automatically strip symbols from the binary.
