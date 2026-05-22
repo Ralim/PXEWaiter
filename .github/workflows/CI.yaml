@@ -81,7 +81,7 @@ jobs:
         toolchain:
           - stable
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Cache cargo & target directories
         uses: Swatinem/rust-cache@v2
       - name: Configure Git
@@ -118,7 +118,7 @@ jobs:
           ( startsWith( github.ref, 'refs/tags/v' ) ||
             github.ref == 'refs/tags/test-release' )
       - name: Publish release artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pxe_waiter-${{ matrix.platform.os_name }}
           path: "pxe_waiter-*"
@@ -131,7 +131,7 @@ jobs:
           ( startsWith( github.ref, 'refs/tags/v' ) ||
             github.ref == 'refs/tags/test-release' )
       - name: Publish GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           draft: false
           prerelease: false
