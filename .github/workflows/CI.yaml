@@ -17,6 +17,72 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  container:
+    name: Demo container with host networking
+    runs-on: ubuntu-24.04
+    env:
+      IMAGE: pxe_waiter:demo
+      CONTAINER: pxe_waiter_ci
+    steps:
+      - uses: actions/checkout@v7
+      # Rootful podman so the image's default ports (69/udp, 80/tcp) can be bound.
+      - name: Build demo image
+        run: sudo podman build -f Dockerfile.demo -t "$IMAGE" .
+      - name: Prepare files to serve
+        run: |
+          mkdir -p pxe
+          echo "Hello from PXEWaiter" > pxe/test.txt
+          # Multi-block file to exercise full TFTP transfers.
+          head -c 1048576 /dev/urandom > pxe/blob.bin
+      - name: Start container
+        run: sudo podman run -d --name "$CONTAINER" --network=host -v "$PWD/pxe:/pxe:ro,Z" "$IMAGE"
+      - name: Wait for HTTP server
+        run: |
+          # Use a non-loopback address to prove the servers listen on the host's interfaces.
+          HOST_IP=$(hostname -I | awk '{print $1}')
+          echo "HOST_IP=$HOST_IP" >> "$GITHUB_ENV"
+          for _ in $(seq 1 30); do
+            if curl -sf -o /dev/null "http://$HOST_IP/test.txt"; then exit 0; fi
+            sleep 1
+          done
+          echo "HTTP server did not start"
+          exit 1
+      - name: HTTP transfer
+        run: |
+          curl -sf -o http-test.txt "http://$HOST_IP/test.txt"
+          cmp http-test.txt pxe/test.txt
+          curl -sf -o http-blob.bin "http://$HOST_IP/blob.bin"
+          cmp http-blob.bin pxe/blob.bin
+          code=$(curl -s -o /dev/null -w '%{http_code}' "http://$HOST_IP/missing")
+          test "$code" = 404
+      - name: TFTP transfer
+        run: |
+          curl -sS --max-time 60 -o tftp-test.txt "tftp://$HOST_IP/test.txt"
+          cmp tftp-test.txt pxe/test.txt
+          curl -sS --max-time 60 -o tftp-blob.bin "tftp://$HOST_IP/blob.bin"
+          cmp tftp-blob.bin pxe/blob.bin
+          if curl -s --max-time 60 -o /dev/null "tftp://$HOST_IP/missing"; then
+            echo "Expected TFTP request for a missing file to fail"
+            exit 1
+          fi
+      - name: Request log reports client source IP
+        run: |
+          logs=$(sudo podman logs "$CONTAINER")
+          echo "$logs"
+          grep -F "[HTTP] $HOST_IP:" <<< "$logs" | grep -F "requested /blob.bin"
+          grep -F "[TFTP] $HOST_IP:" <<< "$logs" | grep -F "requested blob.bin"
+      - name: Container stops cleanly on SIGTERM
+        run: |
+          sudo podman stop -t 10 "$CONTAINER"
+          code=$(sudo podman inspect --format '{{.State.ExitCode}}' "$CONTAINER")
+          echo "Exit code: $code"
+          test "$code" = 0
+      - name: Remove container
+        if: always()
+        run: |
+          sudo podman logs "$CONTAINER" || true
+          sudo podman rm -f "$CONTAINER" || true
+
   test:
     name: ${{ matrix.platform.os_name }} with rust ${{ matrix.toolchain }}
     runs-on: ${{ matrix.platform.os }}
