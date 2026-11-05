@@ -1,0 +1,18 @@
+# Demo compose file running PXEWaiter with host networking.
+#
+#   mkdir -p pxe
+#   podman-compose -f docker-compose-demo.yaml up --build
+#
+# Serves ./pxe over TFTP (69/udp) and HTTP (80/tcp) on all host interfaces.
+services:
+  pxe_waiter:
+    build:
+      context: .
+      dockerfile: Dockerfile.demo
+    image: pxe_waiter:demo
+    # Required: TFTP replies come from ephemeral ports, and client IPs must not be NAT'd.
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - ./pxe:/pxe:ro,Z
+    command: ["-p", "/pxe", "--tftp", "69", "--http", "80"]

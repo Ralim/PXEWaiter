@@ -1,0 +1,20 @@
+# Demo image for PXEWaiter, intended to run with host networking.
+#
+#   podman build -f Dockerfile.demo -t pxe_waiter:demo .
+#   podman run --rm --network=host -v ./pxe:/pxe:ro,Z pxe_waiter:demo
+#
+# Host networking lets TFTP transfers use ephemeral ports freely and keeps the
+# real client source IP visible to the server.
+
+FROM docker.io/library/rust:1-alpine AS builder
+RUN apk add --no-cache musl-dev
+WORKDIR /build
+COPY . .
+# Static musl binary so the runtime image can be empty.
+RUN cargo build --release && cp target/release/pxe_waiter /pxe_waiter
+
+FROM scratch
+COPY --from=builder /pxe_waiter /pxe_waiter
+VOLUME ["/pxe"]
+ENTRYPOINT ["/pxe_waiter"]
+CMD ["-p", "/pxe", "--tftp", "69", "--http", "80"]
