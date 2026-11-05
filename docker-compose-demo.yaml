@@ -15,4 +15,7 @@ services:
     restart: unless-stopped
     volumes:
       - ./pxe:/pxe:ro,Z
+    # Serve each client from the ./pxe/a.b.c.d_z folder matching its IP, or ./pxe/default.
+    # environment:
+    #   SOURCE_IP_DESIGNATION: "true"
     command: ["-p", "/pxe", "--tftp", "69", "--http", "80"]

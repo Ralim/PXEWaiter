@@ -2,7 +2,7 @@
 
 ## v0.3.0
 
-- Ability to use source IP or source MAC to designate different asset folders
+- Ability to use source IP to designate different asset folders
 - Move to async-tftp
 - Move to host-networking mode for dynamic UDP ports for tftp
 
