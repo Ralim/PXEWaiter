@@ -17,6 +17,170 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  container:
+    name: Demo container with host networking
+    runs-on: ubuntu-24.04
+    env:
+      IMAGE: pxe_waiter:demo
+      CONTAINER: pxe_waiter_ci
+    steps:
+      - uses: actions/checkout@v7
+      # Rootful podman so the image's default ports (69/udp, 80/tcp) can be bound.
+      - name: Build demo image
+        run: sudo podman build -f Dockerfile.demo -t "$IMAGE" .
+      - name: Prepare files to serve
+        run: |
+          mkdir -p pxe
+          echo "Hello from PXEWaiter" > pxe/test.txt
+          # Multi-block file to exercise full TFTP transfers.
+          head -c 1048576 /dev/urandom > pxe/blob.bin
+      - name: Start container
+        run: sudo podman run -d --name "$CONTAINER" --network=host -v "$PWD/pxe:/pxe:ro,Z" "$IMAGE"
+      - name: Wait for HTTP server
+        run: |
+          # Use a non-loopback address to prove the servers listen on the host's interfaces.
+          HOST_IP=$(hostname -I | awk '{print $1}')
+          echo "HOST_IP=$HOST_IP" >> "$GITHUB_ENV"
+          for _ in $(seq 1 30); do
+            if curl -sf -o /dev/null "http://$HOST_IP/test.txt"; then exit 0; fi
+            sleep 1
+          done
+          echo "HTTP server did not start"
+          exit 1
+      - name: HTTP transfer
+        run: |
+          curl -sf -o http-test.txt "http://$HOST_IP/test.txt"
+          cmp http-test.txt pxe/test.txt
+          curl -sf -o http-blob.bin "http://$HOST_IP/blob.bin"
+          cmp http-blob.bin pxe/blob.bin
+          code=$(curl -s -o /dev/null -w '%{http_code}' "http://$HOST_IP/missing")
+          test "$code" = 404
+      - name: TFTP transfer
+        run: |
+          curl -sS --max-time 60 -o tftp-test.txt "tftp://$HOST_IP/test.txt"
+          cmp tftp-test.txt pxe/test.txt
+          curl -sS --max-time 60 -o tftp-blob.bin "tftp://$HOST_IP/blob.bin"
+          cmp tftp-blob.bin pxe/blob.bin
+          if curl -s --max-time 60 -o /dev/null "tftp://$HOST_IP/missing"; then
+            echo "Expected TFTP request for a missing file to fail"
+            exit 1
+          fi
+      - name: Request log reports client source IP
+        run: |
+          logs=$(sudo podman logs "$CONTAINER")
+          echo "$logs"
+          grep -F "[HTTP] $HOST_IP:" <<< "$logs" | grep -F "requested /blob.bin"
+          grep -F "[TFTP] $HOST_IP:" <<< "$logs" | grep -F "requested blob.bin"
+      - name: Container stops cleanly on SIGTERM
+        run: |
+          sudo podman stop -t 10 "$CONTAINER"
+          code=$(sudo podman inspect --format '{{.State.ExitCode}}' "$CONTAINER")
+          echo "Exit code: $code"
+          test "$code" = 0
+      - name: Remove container
+        if: always()
+        run: |
+          sudo podman logs "$CONTAINER" || true
+          sudo podman rm -f "$CONTAINER" || true
+
+  container-designation:
+    name: Demo container with source IP designation
+    runs-on: ubuntu-24.04
+    env:
+      IMAGE: pxe_waiter:demo
+      CONTAINER: pxe_waiter_designation_ci
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build demo image
+        run: sudo podman build -f Dockerfile.demo -t "$IMAGE" .
+      - name: Prepare designation folders
+        run: |
+          # Overlapping loopback ranges; clients pick a source with `curl --interface`.
+          #   127.0.1.5 -> 127.0.1.0_24, 127.0.2.5 -> 127.0.0.0_16, 127.1.0.5 -> default
+          mkdir -p pxe/127.0.1.0_24 pxe/127.0.0.0_16 pxe/default pxe/not-a-range
+          echo "127.0.1.0/24" > pxe/127.0.1.0_24/test.txt
+          echo "127.0.0.0/16" > pxe/127.0.0.0_16/test.txt
+          echo "default" > pxe/default/test.txt
+          echo "only 127.0.1.0/24" > pxe/127.0.1.0_24/only-24.txt
+          # Multi-block file to exercise full TFTP transfers.
+          head -c 1048576 /dev/urandom > pxe/127.0.1.0_24/blob.bin
+          echo "never served" > pxe/root.txt
+          echo "never served" > pxe/not-a-range/test.txt
+      - name: Start container
+        # Enabled via the environment variable; the CLI flag is covered by unit tests.
+        run: sudo podman run -d --name "$CONTAINER" --network=host -e SOURCE_IP_DESIGNATION=true -v "$PWD/pxe:/pxe:ro,Z" "$IMAGE"
+      - name: Wait for HTTP server
+        run: |
+          for _ in $(seq 1 30); do
+            if curl -sf -o /dev/null --interface 127.0.1.5 "http://127.0.0.1/test.txt"; then exit 0; fi
+            sleep 1
+          done
+          echo "HTTP server did not start"
+          exit 1
+      - name: Startup log lists designation folders
+        run: |
+          logs=$(sudo podman logs "$CONTAINER")
+          echo "$logs"
+          grep -Fx "  /pxe/127.0.1.0_24 serves 127.0.1.0/24" <<< "$logs"
+          grep -Fx "  /pxe/127.0.0.0_16 serves 127.0.0.0/16" <<< "$logs"
+          grep -Fx "  /pxe/default serves clients matching no other folder" <<< "$logs"
+          grep -F "  /pxe/not-a-range ignored" <<< "$logs"
+          grep -F "  /pxe/root.txt ignored" <<< "$logs"
+      - name: HTTP transfer per source IP
+        run: |
+          for client in "127.0.1.5 127.0.1.0_24" "127.0.2.5 127.0.0.0_16" "127.1.0.5 default"; do
+            read -r src folder <<< "$client"
+            curl -sf --interface "$src" -o http-test.txt "http://127.0.0.1/test.txt"
+            cmp http-test.txt "pxe/$folder/test.txt"
+          done
+          curl -sf --interface 127.0.1.5 -o http-blob.bin "http://127.0.0.1/blob.bin"
+          cmp http-blob.bin pxe/127.0.1.0_24/blob.bin
+          # Clients only see the contents of their own folder.
+          for request in "127.0.2.5 /only-24.txt" "127.1.0.5 /only-24.txt" "127.0.1.5 /root.txt" \
+              "127.0.1.5 /default/test.txt" "127.1.0.5 /127.0.1.0_24/test.txt" "127.0.1.5 /../default/test.txt"; do
+            read -r src path <<< "$request"
+            code=$(curl -s --path-as-is --interface "$src" -o /dev/null -w '%{http_code}' "http://127.0.0.1$path")
+            echo "$src $path -> $code"
+            test "$code" = 404
+          done
+      - name: TFTP transfer per source IP
+        run: |
+          for client in "127.0.1.5 127.0.1.0_24" "127.0.2.5 127.0.0.0_16" "127.1.0.5 default"; do
+            read -r src folder <<< "$client"
+            curl -sS --max-time 60 --interface "$src" -o tftp-test.txt "tftp://127.0.0.1/test.txt"
+            cmp tftp-test.txt "pxe/$folder/test.txt"
+          done
+          curl -sS --max-time 60 --interface 127.0.1.5 -o tftp-blob.bin "tftp://127.0.0.1/blob.bin"
+          cmp tftp-blob.bin pxe/127.0.1.0_24/blob.bin
+          # Clients only see the contents of their own folder.
+          for request in "127.0.2.5 /only-24.txt" "127.1.0.5 /only-24.txt" "127.0.1.5 /root.txt" \
+              "127.0.1.5 /default/test.txt" "127.1.0.5 /127.0.1.0_24/test.txt" "127.0.1.5 /../default/test.txt"; do
+            read -r src path <<< "$request"
+            if curl -s --max-time 60 --path-as-is --interface "$src" -o /dev/null "tftp://127.0.0.1$path"; then
+              echo "Expected TFTP request for $path from $src to fail"
+              exit 1
+            fi
+          done
+      - name: Request log reports the serving folder
+        run: |
+          logs=$(sudo podman logs "$CONTAINER")
+          echo "$logs"
+          grep -F "[HTTP] 127.0.1.5:" <<< "$logs" | grep -F "requested /blob.bin from /pxe/127.0.1.0_24"
+          grep -F "[TFTP] 127.0.1.5:" <<< "$logs" | grep -F "requested blob.bin from /pxe/127.0.1.0_24"
+          grep -F "[HTTP] 127.0.2.5:" <<< "$logs" | grep -F "requested /test.txt from /pxe/127.0.0.0_16"
+          grep -F "[TFTP] 127.1.0.5:" <<< "$logs" | grep -F "requested test.txt from /pxe/default"
+      - name: Container stops cleanly on SIGTERM
+        run: |
+          sudo podman stop -t 10 "$CONTAINER"
+          code=$(sudo podman inspect --format '{{.State.ExitCode}}' "$CONTAINER")
+          echo "Exit code: $code"
+          test "$code" = 0
+      - name: Remove container
+        if: always()
+        run: |
+          sudo podman logs "$CONTAINER" || true
+          sudo podman rm -f "$CONTAINER" || true
+
   test:
     name: ${{ matrix.platform.os_name }} with rust ${{ matrix.toolchain }}
     runs-on: ${{ matrix.platform.os }}
@@ -24,11 +188,6 @@ jobs:
       fail-fast: false
       matrix:
         platform:
-          # Platforms that don't work:
-          #
-          # - sparc64-unknown-linux-gnu - cannot compile openssl-sys
-          # - x86_64-unknown-illumos - weird error compiling openssl - "bin/sh: 1: granlib: not found"
-
           - os_name: FreeBSD-x86_64
             os: ubuntu-24.04
             target: x86_64-unknown-freebsd
@@ -61,17 +220,6 @@ jobs:
             target: riscv64gc-unknown-linux-gnu
             bin: pxe_waiter
             name: pxe_waiter-Linux-riscv64gc-gnu.tar.gz
-          # - os_name: NetBSD-x86_64
-          #   os: ubuntu-24.04
-          #   target: x86_64-unknown-netbsd
-          #   bin: pxe_waiter
-          #   name: pxe_waiter-NetBSD-x86_64.tar.gz
-          #   skip_tests: true
-          - os_name: macOS-x86_64
-            os: macOS-latest
-            target: x86_64-apple-darwin
-            bin: pxe_waiter
-            name: pxe_waiter-Darwin-x86_64.tar.gz
           - os_name: macOS-aarch64
             os: macOS-latest
             target: aarch64-apple-darwin
